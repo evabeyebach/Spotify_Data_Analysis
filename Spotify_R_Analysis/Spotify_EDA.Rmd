@@ -1,0 +1,262 @@
+---
+title: "Spotify Analysis EDA"
+output:
+  html_document:
+    df_print: paged
+  markdown::html_format:
+    meta:
+      css:
+      - default
+      - slides
+      js: slides
+date: "2023-10-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,warning=FALSE,message=FALSE}
+
+
+library(tidyverse) 
+library(ggplot2) 
+library(kknn) 
+library(corrplot)
+library(readr) 
+library(rpart) 
+library(rpart.plot) 
+
+
+```
+
+
+```{r}
+library(readr)
+spotify <- read.csv("/Users/evabeyebach/Desktop/spotify.csv")
+```
+
+
+
+
+### Exploratory Data Anaylsis 
+
+* Different ways that we could look at the Data to answer our questions could be **histograms**, to learn about the distribution of variables, **boxplots**, to find outliers and see which genres are most popular, **scatterplots** to interpret the variables based on `track_popularity` and **correlation matrix** to find out the correlation between variables.
+
+* For the purpose of this analysis we will not use the variables `track_id`, `track_name`, `track_artist`, `track_album_id`, `track_album_name`, `track_abum_release_date`, `playlist_name` nor `playlist_id`. We only want to focus on the sound parameters and genres.
+
+#### Visual histogram exploration to understand the data set.
+
+We will plot some variables to observe its skewiness, distribution, and interpret them.
+
+```{r,warning=FALSE,message=FALSE}
+histograms <- names(spotify)[c(4,12:23)]
+
+songs1 <- spotify %>% 
+            select(c(histograms)) %>%
+            pivot_longer(cols = histograms) 
+
+songs1 %>%
+  ggplot(aes(x = value)) +
+  geom_histogram() +
+  facet_wrap(~name, ncol = 5, scales = 'free') +
+  labs(title = 'Audio Feature Pattern Frequency Plots', x = '', y = '') +
+  theme_void()
+
+
+```
+
+**Observations:**
+
+* `Duration` and `Valence` are **normally distributed**.
+* `Danceability`, `Enery` and `Loudness` are **left-skewed**.
+* `Acousticness`, `Liveness` and `Speechiness` are **right-skewed**.
+* `Key` and `mode` are categorical variables.
+* In `popularity` the max is around 50-60, and it is **normally distributed**. There are a lot of zero values, possible missing values. Very few songs have a popularity of above 90.
+
+
+#### Boxplot to plot different genres vs popularity
+
+
+```{r}
+ggplot(spotify,aes(x = playlist_genre, y = track_popularity, fill = playlist_genre)) +geom_boxplot()
+```
+
+```{r}
+ggplot(spotify,aes(x = playlist_subgenre, y = track_popularity, fill = playlist_subgenre)) +geom_boxplot()
+```
+
+
+**Observations:** 
+
+* We can see that `pop` is the most popular followed by `latin` and `rock`.
+* From the subgenre playlist `post-teen pop` is the most popular followed by `dance pop` and `permament wave`.
+
+
+#### Visualitazion scatterplots based on parameters and popularity
+
+* Now we will plot scatterplots to compare the different parameters to popularity and see which genre has the best popularity based on the different variables. 
+* We also want to see on the most popular songs, which parameter best predicts popularity.
+* We are only going to plot it for the first 500 most popular songs, because therefore we can differentiate more if a variable affect of a song is poular.
+
+```{r}
+# new dataset with some variables
+feature_names <- names(spotify)[c(12:13,15,17:19,23)]
+
+# new dataset only displying variables with 500 most popular songs
+songs <- spotify %>% 
+  arrange(desc(track_popularity)) %>%
+  head(n = 500) %>%
+  pivot_longer(cols = feature_names) 
+
+#plotting 
+songs %>%
+  ggplot(aes(x = name, y = value)) +
+  geom_jitter(aes(color = playlist_genre)) +
+  facet_wrap(~name, ncol = 4, scales = 'free') +
+  labs(title = 'Audio Feature Pattern Frequency Plots', x = '', y = '') +
+  theme(axis.text.y = element_blank())
+
+
+```
+
+**Observation**:
+
+* Higher `danceability`, `energy` and `loudness` usually means more popularity.
+* Lower `speechiness` and `accousticness` and `instrumentalness` means more popular.
+* An average to low `duration` means more popularity.
+* After converting `track_popularity` into dummy variable we could also use other models such as **logistic regression**, **SVM** and **Regression Tree**.
+
+
+#### Visualization Boxplots
+
+We will plot boxplots on every continuous variable to identify outliers.
+
+##### Outliers 
+```{r}
+ggplot(data = songs1) +
+  geom_boxplot(aes(y = value)) + 
+  facet_wrap(~name, nrow = 4, scales = "free") +
+  coord_flip() +
+  ggtitle("Outlier analysis", subtitle = "For different song attributes") +
+  theme_void()
+```
+**Observations:**
+
+From the boxplots we can observe that a lot of variables (`danceability`, `energy`, `loudness`, `speechiness`, `acousticness`, `instrumentalness`, `liveness`, `duration`) have outliers. Removing them would influence the analysis a lot, so we will create a new dataset and remove the outliers on that dataset.
+
+##### Dataset copy without oultiers
+```{r}
+spotify_copy <- spotify
+
+```
+
+##### Truncation
+Now, we will truncate energy speechiness, acousticness, instrumentalness and liveness.
+
+```{r}
+# truncation danceability, energy, speechiness, acousticness, instrumentalness and liveness
+spotify_copy$danceability[spotify_copy$danceability <= 0.28] <- 0.28
+
+spotify_copy$energy[spotify_copy$energy <= 0.2] <- 0.2
+
+spotify_copy$speechiness[spotify_copy$speechiness >= 0.27] <- 0.27
+
+spotify_copy$acousticness[spotify_copy$acousticness >= 0.6] <- 0.6
+
+spotify_copy$instrumentalness[spotify_copy$instrumentalness >= 0.015] <- 0.015
+
+spotify_copy$liveness[spotify_copy$liveness >= 0.4] <- 0.4
+
+```
+
+##### Winsorization
+Now, we will winsorize loudness, tempo and duration.
+```{r}
+# winsorization loudness
+# Calculate the 5th and 95th percentiles for 'loudness'
+lower_bound_loudness <- quantile(spotify_copy$loudness, 0.05, na.rm = TRUE)
+upper_bound_loudness <- quantile(spotify_copy$loudness, 0.95, na.rm = TRUE)
+
+# Winsorize the data
+spotify_copy$loudness[spotify_copy$loudness < lower_bound_loudness] <- lower_bound_loudness
+spotify_copy$loudness[spotify_copy$loudness > upper_bound_loudness] <- upper_bound_loudness
+```
+
+```{r}
+# winsorization tempo
+# Calculate the 5th and 95th percentiles for 'tempo'
+lower_bound_tempo <- quantile(spotify_copy$tempo, 0.05, na.rm = TRUE)
+upper_bound_tempo <- quantile(spotify_copy$tempo, 0.95, na.rm = TRUE)
+
+# Winsorize the data
+spotify_copy$tempo[spotify_copy$tempo < lower_bound_tempo] <- lower_bound_tempo
+spotify_copy$tempo[spotify_copy$tempo > upper_bound_tempo] <- upper_bound_tempo
+
+
+```
+
+```{r}
+#winsorize duration
+# Calculate the 5th and 95th percentiles for 'duration'
+lower_bound_duration_ms <- quantile(spotify_copy$duration_ms, 0.05, na.rm = TRUE)
+upper_bound_duration_ms <- quantile(spotify_copy$duration_ms, 0.95, na.rm = TRUE)
+
+# Winsorize the data
+spotify_copy$duration_ms[spotify_copy$duration_ms < lower_bound_duration_ms] <- lower_bound_duration_ms
+spotify_copy$duration_ms[spotify_copy$duration_ms > upper_bound_duration_ms] <- upper_bound_duration_ms
+
+
+```
+
+##### Show cleaned dataset
+
+```{r}
+knitr::kable(head(spotify[, 1:23]), "simple")
+```
+
+
+
+**Observations:**
+
+* Histograms helped us look a the distribution of variables, and since a lot pf them where numeric we concluded that a **Linear regression** and **regression tree** might be a good model to predict `track_popularity`.
+* Scatterplots helped us see which parameter might influence more our dependent variable. These were: `instrumentalness`, `speechiness` and `loudness`, since the data was more dense.
+* boxplots against `popularity` helped us identify most popular genres: `pop`, `latin` and `rock`.
+* Popular subgenres were: `post-teen pop`, `dance pop` and `permanent wave`.
+
+* We still need to perform a **correlation matrix** and **modelling** to see which variables best predict `track_popularity` and see if they agree with our plots.
+
+#### Correlation Matrix
+
+First, we will select the variables that we will use for the correlation matrix. We will convert `playlist_genre` to categorical in order to be able to see the correlation.
+
+```{r}
+
+matrix <- spotify %>%  select(track_popularity, danceability, energy, key, loudness, mode, speechiness,acousticness, instrumentalness, liveness, valence, tempo, duration_ms, playlist_genre)
+
+matrix$playlist_genre<-recode(matrix$playlist_genre, 'pop'=0, 'r&b'=1, 'rock'=2, 'latin'=3, 'edm'=4, 'rap'=5)
+
+cor_matrix <- cor(matrix)
+print(cor_matrix)
+
+```
+
+```{r}
+corrplot(cor(cor_matrix), method="color", type="upper", order="hclust")
+```
+The overall ranking of the variables that mostly correlate with `track_popularity` are the following:
+
+1. `Duration` (-0.1396)
+
+2. `Instrumentalness` (-0.1244)
+
+3. `Energy` (-0.1036)
+
+4. `Acousticness` (0.0917)
+
+5. `playlist_genre` (-0.0734)
+
+* Comparing to the scatterplots one would think that `instrumentallness`, `speechiness` and `loudness` would have the strongest correlations since they have most points out of the most popular songs in the smallest interval.
+
+* In this correlation matrix however `Duration`, `Instrumentalness` and `Energy` would influence more `track_popularity`.
+

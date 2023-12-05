@@ -1,0 +1,1195 @@
+---
+title: "Spotify Analysis Modelling"
+output:
+  html_document:
+    df_print: paged
+  markdown::html_format:
+    meta:
+      css:
+      - default
+      - slides
+      js: slides
+date: "2023-10-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,warning=FALSE,message=FALSE}
+
+
+library(tidyverse) 
+library(ggplot2) 
+library(kknn) 
+library(corrplot)
+library(readr) 
+library(rpart) 
+library(rpart.plot) 
+
+
+```
+
+
+```{r}
+library(readr)
+spotify <- read.csv("/Users/evabeyebach/Desktop/spotify.csv")
+```
+
+### Modelling
+
+#### Linear Regression model with training and test data
+
+* We want to predict `track popularity` and we want to see which variables best predict the dependent variable. Therefore we will first build a linear regression model to see how it predicts `track_popularity`.
+
+#### Data splitting
+
+```{r}
+# Set the seed for reproducibility
+set.seed(2023)
+
+# Randomly sample row indices for the training set split in 70% and 30%
+train_indices <- sample(1:NROW(spotify),NROW(spotify)*0.70)
+
+# Create the training set
+train_data <- spotify[train_indices, ] #everything before comma is row selector and after comma is column selector
+
+# Create the testing set
+test_data <- spotify[-train_indices, ]
+```
+
+
+##### Linear Regression on Training Set
+```{r}
+# Train the linear regression model, comparing popularity to rest of numeric parameters
+lm_model <- lm(track_popularity ~ danceability + energy  + mode + key + acousticness + loudness +  speechiness +  instrumentalness + liveness + valence + tempo + duration_ms, data = train_data)
+summary(lm_model)
+```
+
+* The model suggests that all the variables are significant except `key`, since it is the only variable with a p-value higher than 0.5. This model has an R^2 of 0.06003 which means that only 6% of the of the data’s variability can be explained by the regression model, which indicated that this is not a good model.
+
+* We can say that when **instrumentalness, speechiness** and **duration_ms** are increased by 1 unit, `track_popularity` is affected the most with coefficients of -9.426, -7.397 and -4.277. However, `energy` and `loudness` did not affect `track_popularity` as much as we thought.
+
+
+##### Manually check the results
+
+
+#### In-sample (training) MSE
+
+We will look at the **In-Sample MSE** to evaluate the model.
+```{r}
+lm_mse_train <- mean((lm_model$fitted.values - train_data$track_popularity)^2)
+print(paste("Training MSE for Linear Model:", round(lm_mse_train, 2)))
+
+
+# Predict on testing data
+lm_test_pred <- predict(lm_model, newdata = test_data)
+# Cal
+lm_mse_test <- mean((lm_test_pred - test_data$track_popularity)^2)
+print(paste("Testing MSE for Linear Model:", round(lm_mse_test, 2)))
+```
+
+
+#### Lm 2 (categorical)
+
+Now, we will train the linear model, comparing it to other **categorical values** to see how they predict popularity.
+
+```{r}
+# Train the linear regression model, comparing popularity to other character parameters
+lm_model_ch <- lm(track_popularity ~ playlist_genre + playlist_subgenre, data = train_data)
+
+summary(lm_model_ch)
+```
+
+The **R^2** is bigger meaning that 13.62% of the variance can be explained by this model. It is still low.
+From the **coefficients** `pop`, has the highest one (31.42), then `rap` and the `r&b`. Looking back at the plots, it looked like `pop`, `latin` and `rock` were the most popular.
+From the **subgenre** it seems like `playlist_subgenrehip pop ` and `playlist_subgenreclassic rock` were the only ones non-significant.
+On the subgenres, `new jack swing` had the highest coefficients, followed by `electropop` and `neo soul`.
+
+```{r}
+# Predict on training data (character)
+lm_train_pred_ch <- mean((lm_model_ch$fitted.values - train_data$track_popularity)^2)
+print(paste("Training MSE for Linear Model:", round(lm_train_pred_ch, 2)))
+
+# Predict on testing data (character)
+lm_test_pred_ch <- predict(lm_model_ch, newdata = test_data)
+# Cal
+lm_mse_test_ch <- mean((lm_test_pred_ch - test_data$track_popularity)^2)
+print(paste("Testing MSE for Linear Model:", round(lm_mse_test_ch, 2)))
+```
+
+Now we will try adding an interaction to see how it would fit the model.
+* We will use the variables that had the biggest coefficient before, to see if we can improve the R^2, with an interaction.
+
+```{r}
+lm_model_int <- lm(track_popularity ~ instrumentalness + speechiness + instrumentalness*speechiness, data = spotify)
+summary(lm_model_int)
+```
+
+As we saw before, almost every variables is significant towards `track popularity`, so it is very easy to find interactions. We performed an interaction which was significant. However the R^2 is too low. Now it is 0.16%.
+The new coefficient to account for this interaction is 30.064 indicating that if there was an increase of 1 in the `instrumentalness` variable that 30.064 would be multiplied by the value of `speechiness`variable in the regression equation.
+
+##### Predictions on new model
+```{r}
+# Predict on training data (character)
+lm_train_pred_int <- mean((lm_model_int$fitted.values - train_data$track_popularity)^2)
+print(paste("Training MSE for Linear Model:", round(lm_train_pred_int, 2)))
+```
+
+
+```{r}
+# Predict on testing data
+lm_test_pred_int <- predict(lm_model_int, newdata = test_data)
+# Cal
+lm_mse_test <- mean((lm_test_pred_int - test_data$track_popularity)^2)
+print(paste("Testing MSE for Linear Model:", round(lm_mse_test, 2)))
+```
+
+
+#### Summary MSE Table
+
+```{r}
+# create matrix with 4 columns and 4 rows
+data <- matrix(c('529.4', '527.51', '486.43', '485.8', '572.16', '549.2'), ncol=2, byrow=TRUE)
+ 
+# specify the column names and row names of matrix
+colnames(data) = c('Training MSE','Testing MSE')
+rownames(data) <- c('LM1','LM2','LM3')
+ 
+# assign to table
+lm_MSE=as.table(data)
+ 
+# display
+lm_MSE
+```
+
+
+#### LM Observations:
+
+* All variables except `key` were statistically significant on the 0.05 level. Which means that a variation in them would influence the outcome in `track_popularity`.
+
+* In the second model, all variables besides `playlist_subgenrelatin hip hop` are statistically significant at the 0.05 level.
+
+* From the table we can see that the model that performed the best was the one with **categorical values** (with a high MSE still)
+
+* While we thought from the plots that `pop`, `latin` and `rock` were the most popular genres, this model indicated that it was `pop`, `rap` and `r&b`.
+
+* With the parameters our model also indicated that `loudness` and `energy` might not affect our model as much as we thought.
+
+* The best R^2 was the model with genres and subgenres (with 13.62%), but the model is still not very good.
+
+
+#### KNN model when k=5
+```{r}
+spotify_knn_model <- kknn(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, train = train_data, test = train_data, k = 5)
+```
+
+##### In-Sample MSE
+```{r}
+# Predict on training data
+knn_train_pred <- fitted.values(spotify_knn_model)
+
+# Calculate in-sample MSE manually
+knn_train_mse <- mean((train_data$track_popularity - knn_train_pred)^2)
+print(paste("In-Sample MSE for KNN: ", knn_train_mse))
+
+```
+
+##### Out-Of-Sample MSE
+```{r}
+# Predict on testing data
+knn_model_test <- kknn(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, train = train_data, test = test_data, k = 5)
+
+knn_test_pred <- fitted.values(knn_model_test)
+
+# Calculate out-of-sample MSE manually
+knn_test_mse <- mean((test_data$track_popularity - knn_test_pred)^2)
+print(paste("Out-of-Sample MSE for KNN: ", knn_test_mse))
+
+```
+#### KNN model when k=20
+
+```{r}
+spotify_knn_model_20 <- kknn(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, train = train_data, test = train_data, k = 20)
+```
+
+##### In-Sample MSE
+```{r}
+# Predict on training data
+knn_train_pred_20 <- fitted.values(spotify_knn_model_20)
+
+# Calculate in-sample MSE manually
+knn_train_mse_20 <- mean((train_data$track_popularity - knn_train_pred_20)^2)
+print(paste("In-Sample MSE for KNN: ", knn_train_mse_20))
+
+```
+
+##### Out-Of-Sample MSE
+```{r}
+# Predict on testing data
+knn_model_test_20 <- kknn(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, train = train_data, test = test_data, k = 20)
+
+knn_test_pred_20 <- fitted.values(knn_model_test_20)
+
+# Calculate out-of-sample MSE manually
+knn_test_mse_20 <- mean((test_data$track_popularity - knn_test_pred_20)^2)
+print(paste("Out-of-Sample MSE for KNN: ", knn_test_mse_20))
+
+```
+
+
+#### KNN model when k=500
+
+```{r}
+spotify_knn_model_500 <- kknn(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, train = train_data, test = train_data, k = 500)
+```
+
+##### In-Sample MSE
+```{r}
+# Predict on training data
+knn_train_pred_500 <- fitted.values(spotify_knn_model_500)
+
+# Calculate in-sample MSE manually
+knn_train_mse_500 <- mean((train_data$track_popularity - knn_train_pred_500)^2)
+print(paste("In-Sample MSE for KNN: ", knn_train_mse_500))
+
+```
+
+##### Out-Of-Sample MSE
+```{r}
+# Predict on testing data
+knn_model_test_500 <- kknn(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, train = train_data, test = test_data, k = 500)
+
+knn_test_pred_500 <- fitted.values(knn_model_test_500)
+
+# Calculate out-of-sample MSE manually
+knn_test_mse_500 <- mean((test_data$track_popularity - knn_test_pred_500)^2)
+print(paste("Out-of-Sample MSE for KNN: ", knn_test_mse_500))
+
+```
+
+#### Adding KNN MSE results to table
+
+
+```{r}
+# create matrix with 4 columns and 4 rows
+knn <- matrix(c('194.90', '687.02', '389.06', '556.981', '517.75', '524.14'), ncol=2, byrow=TRUE)
+ 
+# specify the column names and row names of matrix
+colnames(knn) = c('Training MSE','Testing MSE')
+rownames(knn) <- c('knn5', 'knn20', 'knn500' )
+ 
+# assign to table
+knn_MSE=as.table(knn)
+ 
+# display
+knn_MSE
+lm_MSE
+```
+
+
+When comparing the **Lm** to **knn** model we saw that the model with best Training MSE was **knn5** , but the **MSE** on the testing set was too high (687.02 and 556.981 and 524.14) on the two knn models.
+We did not use all of the variables in the data set, but we used all of our continuous variables.
+
+
+```{r}
+# diagnostic plot
+par(mfrow = c(2, 2))
+plot(lm_model)
+```
+##### Interpreting Models
+
+
+Theoretically, the model that would fit the data the best is the **linear regression** model because it is easier to interpret, you can see the coefficients and how each variable is changed by one unit increase in Y. You also have to meet the four assumptions **(linearity, independence,normality, and  homoscedasticity)**. We can run a diagnostics plot to see if our model meets these assumptions.
+
+From the diagnostic plot, we see that the model **does not** meet the four assumptions, which leads us to the conclusion that the linear regression model is not the best fit for this data. It also has a very low R^2 (also when we tried different data) and very high MSE.
+
+KNN performed better practically since the MSE was lower, but the k's were too low (only 5). We did the same model with k=50 with same variables and the MSE went up to 490. Therefore although R^2 was very small, and MSE very high we still think that **LM** is a better model, since it is also more visual.
+
+
+### Logistic regression
+
+Lets create `track-popularity` as dummy variable and insert a 1, when the popularity is above 70 and a 0 when it is below 70. Meaning that 1 is popular and 0 is not popular. `track_populaity` will be again or dependent variable.
+
+```{r}
+spotify_copy <- spotify
+spotify_copy$track_popularity <- ifelse(spotify_copy$track_popularity >=70, 1 , 0)
+  
+```
+
+##### Data Splitting
+```{r}
+set.seed(2023)
+index <- sample(1:nrow(spotify_copy),nrow(spotify_copy)*0.80)
+spotify_copy.train = spotify_copy[index,]
+spotify_copy.test = spotify_copy[-index,]
+```
+
+
+#### Logistic Regrssion model with all numeric variables
+```{r, warning=FALSE}
+spotify_copy.glm0<- glm(track_popularity~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, family=binomial, data=spotify_copy.train)
+summary(spotify_copy.glm0)
+```
+Observation:
+As we can see from this model, `energy`, `loudness`, `mode`, `speechiness`, `instrumentalness`, `liveness`, `valence`, `tempo` and `duration_ms` are significant in predicting whether a song is going to be popular or not.
+Unlike linear regression, in this model `key` has the highest coefficient with -9.644, followed by `speechiness` and `liveness`.
+
+#### Prediction
+
+#### In-sample prediction
+
+```{r, fig.width=4, fig.height=4}
+pred.glm0.train <- predict(spotify_copy.glm0,type="response")
+```
+
+```{r}
+#ROC curve 
+library(ROCR)
+pred <- prediction(pred.glm0.train, spotify_copy.train$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+```
+
+```{r}
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+```
+
+ 
+
+#### Out-of-sample prediction (more important)
+```{r}
+pred.glm0.test<- predict(spotify_copy.glm0, newdata = spotify_copy.test, type="response")
+```
+
+##### ROC Curve for Out-Of-Sample
+```{r, message=FALSE, warning=FALSE, fig.width=6, fig.height=5}
+pred <- prediction(pred.glm0.test, spotify_copy.test$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+```
+
+
+In order to get the matrix for True Positive and True Negative Predictions, we will determine the optimal cut-off Probability using Grid Search Method. We will first use a weight of 5 and 1.
+
+
+```{r}
+# define a cost function with input "obs" being observed response 
+# and "pi" being predicted probability, and "pcut" being the threshold.
+costfunc = function(obs, pred.p, pcut){
+	weight1 = 5   # define the weight for "true=1 but pred=0" (FN)
+	weight0 = 1    # define the weight for "true=0 but pred=1" (FP)
+	c1 = (obs==1)&(pred.p<pcut)    # count for "true=1 but pred=0"   (FN)
+	c0 = (obs==0)&(pred.p>=pcut)   # count for "true=0 but pred=1"   (FP)
+	cost = mean(weight1*c1 + weight0*c0)  # misclassification with weight
+	return(cost) # you have to return to a value when you write R functions
+} # end of the function
+
+# define a sequence from 0.01 to 1 by 0.01
+p.seq = seq(0.01, 1, 0.01) 
+
+# write a loop for all p-cut to see which one provides the smallest cost
+# first, need to define a 0 vector in order to save the value of cost from all pcut
+cost = rep(0, length(p.seq))  
+for(i in 1:length(p.seq)){ 
+	cost[i] = costfunc(obs = spotify_copy.train$track_popularity, pred.p = pred.glm0.train, pcut = p.seq[i])  
+} # end of the loop
+
+#cbind(p.seq, cost)
+
+# draw a plot with X axis being all pcut and Y axis being associated cost
+plot(p.seq, cost)
+# find the optimal pcut
+optimal.pcut.glm0 = p.seq[which(cost==min(cost))]
+print(optimal.pcut.glm0)
+```
+
+
+#### Use the optimal cut-off probability for in-sample data
+
+```{r}
+# step 1. get binary classification
+class.glm0.train.opt<- (pred.glm0.train>optimal.pcut.glm0)*1
+# step 2. get confusion matrix, MR, FPR, FNR
+table(spotify_copy.train$track_popularity, class.glm0.train.opt, dnn = c("True", "Predicted"))
+```
+**Observation:**
+
+With weight of 5 and 1, we got 16845 **TN**, 824 **TP**, 3422 **FP** and 1593 **FN**. These predictions seem very good. It means for example that 824 were predicted a popular when they were popular.
+
+##### Obtain MR, FPR, FNR and cost rate.
+```{r}
+MR<- mean(spotify_copy.train$track_popularity!= class.glm0.train.opt)
+FPR<- sum(spotify_copy.train$track_popularity==0 & class.glm0.train.opt==1)/sum(spotify_copy.train$track_popularity==0)
+FNR<- sum(spotify_copy.train$track_popularity==1 & class.glm0.train.opt==0)/sum(spotify_copy.train$track_popularity==1)
+cost<- costfunc(obs = spotify_copy.train$track_popularity, pred.p = class.glm0.train.opt, pcut = optimal.pcut.glm0)  
+print(paste0("MR:",MR))
+print(paste0("FPR:",FPR))
+print(paste0("FNR:",FNR))
+print(paste0("cost:",cost))
+```
+We got 0.1534 for **MR**, which is pretty accuarte for such a complicated data. 
+We also got 0.0896 fro **FPR**, 0.7757 for **FNR** and 0.4419 for cost.
+
+Now, lets do the same with the **Out-Of-Sample** Data which is more important and calculate MR.
+
+```{r}
+# step 0. obtain predicated values on testing data (we actually did this already, but let's do it again) 
+pred.glm0.test<- predict(spotify_copy.glm0, newdata = spotify_copy.test, type="response")
+
+# step 1. get binary classification, I used the optimal cut-off
+pred.glm0.test.opt <- (pred.glm0.test>optimal.pcut.glm0)*1
+# step 2. get confusion matrix, MR, FPR, FNR
+table(spotify_copy.test$track_popularity, pred.glm0.test.opt, dnn = c("True", "Predicted"))
+```
+
+**Observation:**
+
+With weight of 5 and 1, (optimal cut-off being 0.15) we got 4214 **TN**, 186 **TP**, 876 **FP** and 396 **FN**. These predictions seem very good. It means for example that 186 were predicted a popular when they were popular.
+
+
+```{r}
+MR<- mean(spotify_copy.test$track_popularity!= pred.glm0.test.opt)
+FPR<- sum(spotify_copy.test$track_popularity==0 & pred.glm0.test.opt==1)/sum(spotify_copy.test$track_popularity==0)
+FNR<- sum(spotify_copy.test$track_popularity==1 & pred.glm0.test.opt==0)/sum(spotify_copy.test$track_popularity==1)
+cost<- costfunc(obs = spotify_copy.test$track_popularity, pred.p = pred.glm0.test.opt, pcut = optimal.pcut.glm0)  
+print(paste0("MR:",MR))
+print(paste0("FPR:",FPR))
+print(paste0("FNR:",FNR))
+print(paste0("cost:",cost))
+```
+
+Out of sample MR is still very good, with a score of 0.1523.
+We also got 0.08701 for *FPR*, 0.79087 for *FNR* and 0.4457 for *cost*. All of the values were better for testing set except of *FNR*.
+
+#### Logistic Regression model 2 (with categorical variables)
+
+
+```{r, warning=FALSE}
+spotify_glm0_cat<- glm(track_popularity~ playlist_genre + playlist_subgenre, family=binomial, data=spotify_copy.train)
+summary(spotify_glm0_cat)
+```
+
+**Observation:**
+
+* All of the variables are significant at the 0.05 level, except
+`playlist_subgenrebig room`, `playlist_subgenreclassic rock`, `playlist_subgenrepost-teen pop`, `playlist_subgenreprogressive electro house`, `playlist_subgenretrap`, `playlist_subgenretropical` and  `playlist_subgenreurban contemporary`.
+
+* Now under genre, the highest change in one unit goes to `pop`, followed by `r&b` and `rap`.
+
+* For the subgenre, the highest coefficients were on `southern hip hop `, followed by `reggaeton` and `dance pop`. On lm the biggest changes were in other variables (`new jack swing`, `electropop` and `neo soul`).
+
+
+#### Prediction
+
+##### Let's start with in-sample prediction for logistic model 2
+
+```{r, fig.width=4, fig.height=4}
+pred.glm0_cat.train <- predict(spotify_glm0_cat,type="response")
+
+
+#ROC curve 
+library(ROCR)
+pred <- prediction(pred.glm0_cat.train, spotify_copy.train$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+```
+
+#### Out-of-sample prediction for model 2 (more important)
+```{r}
+pred.glm0.test_cat<- predict(spotify_glm0_cat, newdata = spotify_copy.test, type="response")
+
+pred <- prediction(pred.glm0.test_cat, spotify_copy.test$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+plot(perf, colorize=TRUE)
+```
+**Observation:**
+For the training set we get an AUC of 0.7594 and for the testing set we get 0.75398.
+
+#### Find optimal p-cut value for new model
+
+```{r}
+# define a cost function with input "obs" being observed response 
+# and "pi" being predicted probability, and "pcut" being the threshold.
+costfunc = function(obs, pred.p, pcut){
+	weight1 = 5   # define the weight for "true=1 but pred=0" (FN)
+	weight0 = 1    # define the weight for "true=0 but pred=1" (FP)
+	c1 = (obs==1)&(pred.p<pcut)    # count for "true=1 but pred=0"   (FN)
+	c0 = (obs==0)&(pred.p>=pcut)   # count for "true=0 but pred=1"   (FP)
+	cost = mean(weight1*c1 + weight0*c0)  # misclassification with weight
+	return(cost) # you have to return to a value when you write R functions
+} # end of the function
+
+# define a sequence from 0.01 to 1 by 0.01
+p.seq = seq(0.01, 1, 0.01) 
+
+# write a loop for all p-cut to see which one provides the smallest cost
+# first, need to define a 0 vector in order to save the value of cost from all pcut
+cost = rep(0, length(p.seq))  
+for(i in 1:length(p.seq)){ 
+	cost[i] = costfunc(obs = spotify_copy.train$track_popularity, pred.p = pred.glm0_cat.train, pcut = p.seq[i])  
+} # end of the loop
+
+#cbind(p.seq, cost)
+
+# find the optimal pcut
+optimal.pcut.glm0 = p.seq[which(cost==min(cost))]
+print(optimal.pcut.glm0)
+```
+
+The optimal pcut is either 0.17 or 0.18.
+Now we will get MR, FPR, FNR and cost to compare it to each other.
+
+##### Get scores for LGM 2 and training set
+
+```{r}
+# step 1. get binary classification
+class.glm0.train.cat<- (pred.glm0_cat.train>optimal.pcut.glm0)*1
+
+# get values
+MR<- mean(spotify_copy.train$track_popularity!= class.glm0.train.cat)
+FPR<- sum(spotify_copy.train$track_popularity==0 & class.glm0.train.cat==1)/sum(spotify_copy.train$track_popularity==0)
+FNR<- sum(spotify_copy.train$track_popularity==1 & class.glm0.train.cat==0)/sum(spotify_copy.train$track_popularity==1)
+cost<- costfunc(obs = spotify_copy.train$track_popularity, pred.p = class.glm0.train.cat, pcut = optimal.pcut.glm0)  
+print(paste0("MR:",MR))
+print(paste0("FPR:",FPR))
+print(paste0("FNR:",FNR))
+print(paste0("cost:",cost))
+```
+##### Get scores for LGM 2 and testing set
+
+```{r}
+# step 0. obtain predicated values on testing data (we actually did this already, but let's do it again) 
+pred.glm0.test<- predict(spotify_glm0_cat, newdata = spotify_copy.test, type="response")
+
+# step 1. get binary classification, I used the optimal cut-off
+pred.glm0.test.cat <- (pred.glm0.test>optimal.pcut.glm0)*1
+#Get values
+
+MR<- mean(spotify_copy.test$track_popularity!= pred.glm0.test.cat)
+FPR<- sum(spotify_copy.test$track_popularity==0 & pred.glm0.test.cat==1)/sum(spotify_copy.test$track_popularity==0)
+FNR<- sum(spotify_copy.test$track_popularity==1 & pred.glm0.test.cat==0)/sum(spotify_copy.test$track_popularity==1)
+cost<- costfunc(obs = spotify_copy.test$track_popularity, pred.p = pred.glm0.test.cat, pcut = optimal.pcut.glm0)  
+print(paste0("MR:",MR))
+print(paste0("FPR:",FPR))
+print(paste0("FNR:",FNR))
+print(paste0("cost:",cost))
+```
+#### Table to compare resutls
+
+```{r}
+# create matrix with 2 columns and 4 rows
+lg_num <- matrix(c('0.6856', '0.6610', '0.1534', '0.1523', '0.0896', '0.087', '0.7757', '0.7908', '0.4419', '0.4457'), ncol=2, byrow=TRUE)
+ 
+lg_cat <- matrix(c('0.7593', '0.7539', '0.1513', '0.1571', '0.098', '0.1047', '0.6695', '0.6692', '0.4003', '0.4053'), ncol=2, byrow=TRUE)
+
+
+# specify the column names and row names of matrix
+colnames(lg_num) = c('Training_num','Testing_num')
+rownames(lg_num) <- c('AUC', 'MR', 'FPR', 'FNR', 'Cost' )
+ 
+colnames(lg_cat) = c('Training_cat','Testing_cat')
+rownames(lg_cat) <- c('AUC', 'MR', 'FPR', 'FNR', 'Cost' )
+# assign to table
+lg1_results=as.table(lg_num)
+lg2_results=as.table(lg_cat)
+# display
+
+#lg1_results
+
+
+#lg2_results
+library(knitr)
+
+
+kable(lg1_results) 
+kable(lg2_results)
+
+```
+
+
+##### Conclusion logistic regression
+
+**Observations:**
+We performed two logistic regression models to predict `track_popularity`. One was with numerical observations and the other one with categorical observations.
+**AUC** was better on **categorical** model on the training data. In **MR** on testing was better in the first model and on training was better in the second model.
+Overall the model with categorical variables predicted better than with numerical variables.
+
+Something that we like about this model is that the accuracy is not to bad and the MR is relatively small in all models. We prefer a lower FP ratio meaning that less song are being predicted as popular when they are not. However, the FN ratio is very high meaning that many songs are predicted as not popular when they are popular. 
+
+
+
+
+#### Support Vector Model 1 (SVM)
+We are first going to make a new data set without the categorical variables, then make our `track_popularity` variable 2 levels.
+
+```{r}
+spotify_new = subset(spotify, select = -c(track_album_release_date, track_id, track_name, track_artist, track_album_name, track_album_id , track_album_name, playlist_genre, playlist_name, playlist_subgenre, playlist_id) )
+
+spotify_new$track_popularity <- ifelse(spotify_new$track_popularity >=70, 1 , 0)
+
+```
+
+##### Data Splitting
+```{r}
+#splitting the data 
+set.seed(2023)
+index <- sample(1:nrow(spotify_new),nrow(spotify_new)*0.80)
+spotify_svm_train <-  spotify_new[index,]
+spotify_svm_test <- spotify_new[-index,]
+
+```
+
+##### Weight Cost
+```{r}
+#fitting the data w/o weight class cost 
+library(e1071)
+
+spotify_new$track_popularity<- as.factor(spotify_new$track_popularity)
+
+str(spotify_new)
+
+
+#svm model 
+spotify_svm = svm({{as.factor(track_popularity)}} ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, data = spotify_svm_train, kernel = 'linear')
+
+
+```
+
+
+```{r}
+# predictions on the train data
+pred_spotify_train = predict(spotify_svm, spotify_svm_train)
+
+# Confusion matrix to evaluate the model on train data
+Cmatrix_train = table(true = spotify_svm_train$track_popularity ,
+                      pred = pred_spotify_train)
+Cmatrix_train
+
+#Mis-classification rate 
+1 - sum(diag(Cmatrix_train))/sum(Cmatrix_train)
+
+
+# Predictions on the train data
+pred_spotify_test <- predict(spotify_svm, spotify_svm_test)
+
+# Confusion matrix to evaluate the model on train data
+Cmatrix_test = table(true = spotify_svm_test$track_popularity,
+                     pred = pred_spotify_test)
+Cmatrix_test
+
+#Mis-classification rate 
+1 - sum(diag(Cmatrix_test))/sum(Cmatrix_test)
+```
+**Observations**
+
+
+As we can see this model **is not working well** since no songs are predicted as popular. Therefore we will try either different kernels or different weight to see if we can be able to get a better model.
+
+#### SVM Model 2
+Now we are going to fit a SVM model with weight cost using the train data 
+```{r}
+spotify_svm_asymmetric = svm(as.factor(track_popularity) ~  danceability + energy + loudness + speechiness + mode + key + acousticness+ instrumentalness + liveness + valence + tempo +duration_ms, data = spotify_svm_train, kernel = 'linear', class.weights = c("0" = 1, "1" = 7))
+
+```
+```{r}
+# predictions for train data
+pred_spotify_train <- predict(spotify_svm_asymmetric, spotify_svm_train)
+#Confusion matrix for train data 
+Cmatrix_train_21 <- table(true =spotify_svm_train$track_popularity, 
+                           pred = pred_spotify_train)
+print(Cmatrix_train_21)
+
+#Mis-classification rate
+1 - sum(diag(Cmatrix_train_21))/sum(Cmatrix_train_21)
+```
+
+
+The confusion matrix of the predicted values with the training data shows the number of **TN** as 16364, **FP** as 4211 , **FN** as 1240 and **TP** as 869.
+
+The **mis-classification error rate** is 0.24.
+This is the best model we could get with lineal kernel. However the MR is vry high with 0.24.
+
+Now we are going to fit a SVM model with cost using the testing data 
+```{r}
+#testing predicted probability
+pred_spotify_test <- predict(spotify_svm_asymmetric, spotify_svm_test)
+
+#Confusion matrix 
+Cmatrix_test_22 <-  table( true = spotify_svm_test$track_popularity, pred = pred_spotify_test)
+
+print(Cmatrix_test_22)
+
+#Mis-classification rate
+MR <- 1 - sum(diag(Cmatrix_test_22))/sum(Cmatrix_test_22)
+MR
+```
+
+
+The confusion matrix of the predicted values with the testing data shows the number of **TN** as 4051, **FN** as 1095 , **FP** as 320 and **TP** as 206.
+
+The **MR** is 0.25
+Still a very high MR.
+
+
+#### SVM Model 3
+Lets do another model with polynomial kernel ad compare those.
+
+```{r}
+spotify_svm_asy_poly = svm(as.factor(track_popularity) ~  danceability + energy + loudness + speechiness + mode + key + acousticness+ instrumentalness + liveness + valence + tempo +duration_ms, data = spotify_svm_train, kernel = 'polynomial', class.weights = c("0" = 1, "1" = 5))
+
+# predictions for train data
+pred_spotify_train_poly <- predict(spotify_svm_asy_poly, spotify_svm_train)
+#Confusion matrix for train data 
+Cmatrix_train_23 <- table(true =spotify_svm_train$track_popularity, 
+                           pred = pred_spotify_train_poly)
+print(Cmatrix_train_23)
+
+#Mis-classification rate
+1 - sum(diag(Cmatrix_train_23))/sum(Cmatrix_train_23)
+```
+```{r}
+#testing predicted probability
+pred_spotify_test_asy <- predict(spotify_svm_asy_poly, spotify_svm_test)
+
+#Confusion matrix 
+Cmatrix_test_24 <-  table( true = spotify_svm_test$track_popularity, pred = pred_spotify_test_asy)
+
+print(Cmatrix_test_24)
+
+#Mis-classification rate
+MR <- 1 - sum(diag(Cmatrix_test_24))/sum(Cmatrix_test_24)
+MR
+```
+**Observations**:
+
+Polynomial SVM with different weight is the best SVM model for this data set. We were able to get predictions for popularity (not many), and our MR is lower than in the previous model (With **0.11**) . We also had a lower weight on 1 than in the linear model. 
+
+
+##### AUC SVM 1
+
+
+```{r}
+#ROC and AUC using the train data 
+
+spotify_svm_prob = svm(as.factor(track_popularity) ~  danceability + energy + loudness + speechiness + mode + key + acousticness+ instrumentalness + liveness + valence + tempo +duration_ms, data = spotify_svm_train, kernel = 'linear',
+                      probability = TRUE) 
+pred_prob_train = predict(spotify_svm_prob,
+                          newdata = spotify_svm_train,
+                          probability = TRUE) 
+
+pred_prob_train = attr(pred_prob_train, "probabilities")[, 2] 
+
+#ROC
+library(ROCR)
+pred <- prediction(pred_prob_train, spotify_svm_train$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+
+#AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+```
+The AUC is  **0.5867**.
+
+```{r}
+#refitting the model on testing
+pred_prob_test = predict(spotify_svm_prob,
+                         newdata = spotify_svm_test,
+                         probability = TRUE)
+
+pred_prob_test = attr(pred_prob_test, "probabilities")[, 2]
+
+#ROC
+pred <- prediction(pred_prob_test, spotify_svm_test$track_popularity )
+perf <- performance(pred, "tpr", "fpr")
+
+
+#AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+```
+The AUC is **0.5699**.
+
+
+##### AUC SVM 2
+```{r}
+# work on it here!
+
+#refit the model with probability enable
+spotify_svm_asymmetric = svm(as.factor(track_popularity) ~  danceability + energy + loudness + speechiness + mode + key + acousticness+ instrumentalness + liveness + valence + tempo +duration_ms, data = spotify_svm_train, kernel = 'linear', class.weights = c("0" = 1, "1" = 7),probability = TRUE)
+
+
+
+#get predictions for training
+pred_prob_train <- predict(spotify_svm_asymmetric, spotify_svm_train, probability = TRUE)
+pred_prob_train = attr(pred_prob_train, "probabilities")[, 2]
+
+#ROC and AUC
+#ROC
+library(ROCR)
+pred <- prediction(pred_prob_train, spotify_svm_train$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+#get predictions for testing
+pred_prob_test <- predict(spotify_svm_asymmetric, spotify_svm_test, probability = TRUE)
+pred_prob_test = attr(pred_prob_test, "probabilities")[, 2]
+
+#ROC and AUC
+#ROC
+library(ROCR)
+pred <- prediction(pred_prob_test, spotify_svm_test$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+```
+
+
+**Observations**:
+From our second model we got a better **AUC** for almost 10% higher with scores of (0.68 and 0.66).
+
+##### AUC SVM 3
+
+```{r}
+# work on it here!
+
+#refit the model with probability enable
+spotify_svm_asymmetric_POL = svm(as.factor(track_popularity) ~  danceability + energy + loudness + speechiness + mode + key + acousticness+ instrumentalness + liveness + valence + tempo +duration_ms, data = spotify_svm_train, kernel = 'polynomial', class.weights = c("0" = 1, "1" = 5),probability = TRUE)
+
+
+
+#get predictions for training
+pred_prob_train <- predict(spotify_svm_asymmetric_POL, spotify_svm_train, probability = TRUE)
+pred_prob_train = attr(pred_prob_train, "probabilities")[, 2]
+
+#ROC and AUC
+#ROC
+library(ROCR)
+pred <- prediction(pred_prob_train, spotify_svm_train$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+#get predictions for testing
+pred_prob_test <- predict(spotify_svm_asymmetric_POL, spotify_svm_test, probability = TRUE)
+pred_prob_test = attr(pred_prob_test, "probabilities")[, 2]
+
+#ROC and AUC
+#ROC
+library(ROCR)
+pred <- prediction(pred_prob_test, spotify_svm_test$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+```
+
+**From our last model we get the best in training AUC  with 0.714 and a lower score on the AUC of testing set (with 0.659).
+
+
+
+#### Table to compare SVM Results
+```{r}
+# create matrix with 2 columns and 4 rows
+svm_results <- matrix(c('0.587', '0.5909', '0.6800', '0.658','0.715', '0.66', '0.0929', '0.0928', '0.0930', '0.0927', '0.105', '0.1096'), ncol=2, byrow=TRUE)
+ 
+
+# specify the column names and row names of matrix
+colnames(svm_results) = c('Training_svm','Testing_svm')
+rownames(svm_results) <- c('AUC1','AUC2', 'AUC3', 'MR1','MR2', 'MR3' )
+ 
+
+# assign to table
+svm=as.table(svm_results)
+
+# display
+
+kable(lg1_results)
+kable(svm) 
+
+
+```
+
+
+
+**Observations:**
+For the SVM model we performed *three* different ones. The first one was a model with *no weights* and *linear* kernel. That one did not predict any single popular song. Then we did a linear model with weights (to *weighted* to 1). Lastly a *polynomial* model with 5 weights on 1. 
+The model with **best MR** was the second model (0.927 on testing), and the confusion matrix made sense as well. **Best AUC** was on the third model with 0.66 on the testing set. Out of all three the third one performed the best, since it was also less weighted.
+
+
+#### Classification Tree
+
+We will create a copy of `spotify` with a new data name for the purpose of this analysis.
+
+```{r}
+spotify_dec <- spotify
+
+spotify_dec$track_popularity <- ifelse(spotify_dec$track_popularity >=70, 1 , 0)
+
+```
+
+#### Data Spliting
+
+##### Changing data types
+```{r}
+spotify_dec$mode<- as.factor(spotify_dec$mode)
+spotify_dec$key<- as.factor(spotify_dec$key)
+
+```
+
+
+```{r}
+set.seed(2023)
+index <- sample(1:nrow(spotify_dec),nrow(spotify_dec)*0.60)
+spotify_dec.train = spotify_dec[index,]
+spotify_dec.test = spotify_dec[-index,]
+
+```
+
+#### Classification Tree 1 
+
+```{r}
+
+# fit the model
+fit_tree_dec <- rpart(as.factor(track_popularity) ~ danceability + energy + speechiness + loudness + instrumentalness+ mode+ key + acousticness+ liveness + valence + tempo, data=spotify_dec.train)
+summary(fit_tree_dec)
+
+
+```
+
+```{r}
+#rpart.plot(fit_tree, yesno=2, extra=4)
+
+```
+Obtain the predicted values for training data and confusion matrix.
+
+```{r}
+# Make predictions on the train data
+pred_credit_train <- predict(fit_tree_dec, spotify_dec.train, type="class")
+
+# Confusion matrix to evaluate the model on train data
+Cmatrix_train = table(true = spotify_dec.train$track_popularity,
+                      pred = pred_credit_train)
+Cmatrix_train
+
+1 - sum(diag(Cmatrix_train))/sum(Cmatrix_train)
+
+```
+**Observation:**
+
+From this model we get a very small missclassification rate of 0.0935, but from the Confusion Matrix of the training set we can see that none of the variables are predicted as 1.
+
+
+Obtain the predicted values for testing data and confusion matrix.
+
+```{r}
+# Make predictions on the test data
+pred_credit_test <- predict(fit_tree_dec, spotify_dec.test, type="class")
+
+# Confusion matrix to evaluate the model on train data
+Cmatrix_test = table(true = spotify_dec.test$track_popularity,
+                     pred = pred_credit_test)
+Cmatrix_test
+
+1 - sum(diag(Cmatrix_test))/sum(Cmatrix_test)
+```
+**Observation:**
+
+Now that we have done th same on the testing set, we can see that MR is even smaller with 0.092 but still none of the variables are predicted as 1. This model is not good. Therefore we will use asymmetric test, to produce different weights and see if this improves the model.
+
+##### Classification Tree 2 (with weights)
+
+```{r out.width = '50%', fig.align = 'center'}
+# We need to define a cost matrix first, don't change 0 there
+cost_matrix <- matrix(c(0, 1,  # cost of 1 for FP
+                        6, 0),  # cost of 6 for FN
+                      byrow = TRUE, nrow = 2)
+fit_tree_asym <- rpart(as.factor(track_popularity) ~ danceability + energy + speechiness + loudness + instrumentalness+ mode+ key + acousticness+ liveness + valence + tempo, data=spotify_dec.train, parms = list(loss = cost_matrix))
+
+rpart.plot(fit_tree_asym,extra=4, yesno=2)
+
+```
+
+Since we now do have some variables on the '1' side of the data, we can visualize the tree in a plot. We can predict that from the variables `energy` is the one that best predicts a popular song. The model explains that `energy` value smaller 0.82 would predict 1, and `loudness` bigger that -5.1 would also predict 1.
+
+```{r}  
+#get predictions for training
+pred_spotify_train <- predict(fit_tree_asym, spotify_dec.train,
+                             type = "class")
+#C matrix for training
+Cmatrix_train_asy <- table( true = spotify_dec.train$track_popularity, pred = pred_spotify_train)
+Cmatrix_train_asy
+
+1 - sum(diag(Cmatrix_train_asy))/sum(Cmatrix_train_asy)
+
+
+```
+**Observation:**
+Now that we have redistributed the weights we finally can get some values for 1 (being popular) , with 537 being *TP*, 2265 *FP*, 13157 *TN* and 1054 *FN* on the training set.
+However, now we have a bigger MR with 0.1951.
+Lets get assymmetric predictions for the testing set.
+
+```{r}
+#get predictions for testing
+pred_credit_test <- predict(fit_tree_asym, spotify_dec.test, type = "class")
+#C matrix for testing with more weights on "1"
+Cmatrix_test_weight = table( true = spotify_dec.test$track_popularity, pred = pred_credit_test)
+Cmatrix_test_weight
+
+1 - sum(diag(Cmatrix_test_weight))/sum(Cmatrix_test_weight)
+
+```
+**Observation:**
+
+Now for the testing set we getthe following values: with 337 being *TP*, 1479 *FP*, 8820 *TN* and 707 *FN* on the training set.
+The **MR** is now a bit lower with a value of 0.1927.
+Something that is not too good is that the prediction for a popular song, when it is popular, is small compared to other predictions.
+Now, we will obtain the **AUC** for the training and testing data.
+
+```{r}
+# obtain predicted probability
+pred_prob_train = predict(fit_tree_dec, spotify_dec.train, type = "prob")
+
+# This is necessary again, as predict() for tree model return two values, one for 0 and one for 1.
+# Replace "1" with the actual category if response variable is a factor
+pred_prob_train = pred_prob_train[,"1"] 
+
+library(ROCR)
+pred <- prediction(pred_prob_train, spotify_dec.train$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+
+```
+
+
+```{r out.width = '50%', fig.align = 'center'}
+# obtain predicted probability
+pred_prob_test = predict(fit_tree_dec, spotify_dec.test, type = "prob")
+# This is necessary again, as predict() for tree model return two values, one for 0 and one for 1.
+pred_prob_test = pred_prob_test[,"1"] #replace "1" with the actual category if reponse variable is a factor
+#ROC
+pred <- prediction(pred_prob_test, spotify_dec.test$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+```
+
+**Observation:** 
+
+When we get the AUC for both the training and testing datasets for the model with no weight we get the same value of 0.5 and the ROC curve is a diagonal linear line. This is due to the fact that none of the variables are predicted as 1.
+Now, lets get the AUC-ROC for the model with weights.
+
+
+#### AUC-ROC model For Tree 2
+```{r}
+# obtain predicted probability
+pred_asym_train = predict(fit_tree_asym, spotify_dec.train, type = "prob")
+
+# This is necessary again, as predict() for tree model return two values, one for 0 and one for 1.
+# Replace "1" with the actual category if response variable is a factor
+pred_asym_train = pred_asym_train[,"1"] 
+
+library(ROCR)
+pred <- prediction(pred_asym_train, spotify_dec.train$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+#plot(perf, colorize=TRUE)
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+```
+#### AUC-ROC model with weights for testing
+
+```{r}
+# obtain predicted probability
+pred_asym_test = predict(fit_tree_asym, spotify_dec.test, type = "prob")
+
+# This is necessary again, as predict() for tree model return two values, one for 0 and one for 1.
+# Replace "1" with the actual category if response variable is a factor
+pred_asym_test = pred_asym_test[,"1"] 
+
+library(ROCR)
+pred <- prediction(pred_asym_test, spotify_dec.test$track_popularity)
+perf <- performance(pred, "tpr", "fpr")
+#plot(perf, colorize=TRUE)
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+```
+
+**Observations**
+The AUC for the second model is not very good (**0.645**), and it is highly weighted on 1.
+
+
+#### Table for Tree Results
+
+```{r}
+# create matrix with 2 columns and 4 rows
+tree_results <- matrix(c('0.5', '0.5', '0.6614', '0.6451', '0.0955', '0.0920', '0.1951', '0.1927'), ncol=2, byrow=TRUE)
+ 
+
+# specify the column names and row names of matrix
+colnames(tree_results) = c('Training_tree','Testing_tree')
+rownames(tree_results) <- c('AUC1', 'AUC2', 'MR1', 'MR2' )
+ 
+
+# assign to table
+tree=as.table(tree_results)
+ 
+```
+
+#### comparing all tables
+```{r}
+
+
+kable(knn_MSE)
+kable(lm_MSE)
+kable(tree)
+kable(lg1_results)
+kable(lg2_results)
+kable(svm) 
+
+
+```
+
+**Observation:** Now that we have done AUC-ROC on the weighted models, we get the best **AUC** of 0.6614 fr the training set and 0.6451 for the testing set, being a better model the one with weights.
+Overall, although **MR** is lower on the model with no weights, it does not mean that is better because none of the observations are classified as popular. Although the model with weights has a bigger **MR**, the model does better classification that model 1.
+Overall the model that best fits the data is the one with weights (in classification trees).
+
+
+### Conclusion:
+After, cleaning our data, we did **EDA** to predict which variables and genre would best indicate if a song was popular or not.
+From the visualizations and the models we saw that:
+
+* The Models had different variables but we can agree on `instrumentallness`, `speechiness` and `liveness` being the variables that best predict `track_popularity`. `Loudness` and `Energy` were not the best predictors as one would think.
+* From visualizations and models, all agreed that `pop` predicted popularity the most.
+* `dance pop` was the best predictor as far as subgenre.
+
+From **Data Modeling** we concluded the following:
+
+* In **LM** only `key` was non-significant and 2 variables in the second model.
+**OUT-Of Sample MSE** was the best in the model with categorical values (485.8) when comparing LM to Knn and improved when adding an interaction. But the R^2 was still to low for it to be a good model. When we performed Knn we got a lower MSE (but with less variables) and this model still does not give a good estimate and coefficients.
+
+When comparing **Trees** , **SVM** and **logistic**, **SVM** third model had the best AUC in training (0.715), but the weights are very distributed to 1 and this model is not easy to interpret visually. **Trees** had lower AUC score than **SVM** and **logistic**. **Logistic Regression** was the best model for this dataset because its AUC was almost as high as SVM (0.6856	& 0.6610), and just a bit higher in MR. However we still think that **Logistic Regression** is better than **SVM** becasue we did not have to distribute any weights and the coefficients and estimates are interpretable.
+
+
+Our predictions were that **lm** and **Classification Tree** would be the best models. However **Logistic Regression** performed better than **Tree**, and we did not have to put in in any weights. **Lm** had a too high **MSE** and **R^2** for it to be a good model. Therefore **Regression Tree** is the best model for this dataset. 
+
+
+
+
+
+

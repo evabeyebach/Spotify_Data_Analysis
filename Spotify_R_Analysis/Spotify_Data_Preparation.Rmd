@@ -1,0 +1,163 @@
+---
+title: "Spotify Analysis Data Preparation"
+output:
+  html_document:
+    df_print: paged
+  markdown::html_format:
+    meta:
+      css:
+      - default
+      - slides
+      js: slides
+date: "2023-10-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction
+
+* The [Spotify Dataset](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-01-21/readme.md) comes from Spotify via the spotifyr package. Charlie Thompson, Josiah Parry, Donal Phipps, and Tom Wolff authored this package to make it easier to get either your own data or general metadata around songs from Spotify's API. Kaylin Pavlik had a recent blogpost using the audio features to explore and classify songs. She used the spotifyr package to collect about 5000 songs from 6 main categories.
+
+* The data shows  general metadata around songs from Spotify's API. It shows the song's popularity and other parameters such as acousticness, danceability, energy, speechiness, valence, key, genres and subgenres...
+
+* We want to answer the question: What characteristics of a song can determine its popularity? Which genres and subgenres predict usually the most popular songs?
+
+* The plan is to analyze relationship between popularity and different features of the song to predict future popularity of a song with data modelling. We plan on performing Data Preparation, EDA and Modelling using models such as **linear regression**, **knn**, **logistic regression**, **SVM** and **Tree Models** and compare which one performs better and see which one predicts better if a song is going to be popular or not.
+
+* This is mainly beneficial to market spotify customers and improve their experience while using spotify. Also for Spotify, they will be able to provide more accurate predictions of a new song's potential popularity even before its release and the consumer will be able to identify which factors influence the popularity of a song on Spotify.
+
+
+
+
+### Packages Required
+
+
+```{r,warning=FALSE,message=FALSE}
+
+
+library(tidyverse) 
+library(ggplot2) 
+library(kknn) 
+library(corrplot)
+library(readr) 
+library(rpart) 
+library(rpart.plot) 
+
+
+```
+**Tidyverse**:assists with data import, tidying, manipulation, and data visualization.
+
+**ggplot2**: package for producing statistical, or data, graphics.
+
+**kknn**: performs k-nearest neighbor classification.
+
+**corrplot**: graphical display of a correlation matrix, confidence interval.
+
+**readr**: provides a fast way to read rectangular data.
+
+**rpart**: implements the classification and regression tree algorithm (CART).
+
+**rpart.plot**: An Enhanced Plotting Package for rpart.
+
+### Data Preparation
+
+#### Data Loading
+```{r}
+library(readr)
+spotify <- read.csv("/Users/evabeyebach/Desktop/spotify.csv")
+```
+
+
+#### Data Examination
+
+```{r}
+### Checking dimension of Data
+dim(spotify)
+```
+
+The original dataset contains **32833** rows and **23** columns.
+
+##### First 5 rows
+```{r}
+# show first 5 rows
+head(spotify)
+```
+##### Column Names
+```{r}
+#### Checking column name
+names(spotify)
+```
+
+
+#### Data Cleaning
+
+##### Structure of Data
+```{r}
+### Checking structure of Data
+str(spotify)
+```
+
+**Observations:**
+
+* We need to change  `track_album_release_date` to date variable. We will also change `playlist_genre` to factor, for future plotting.  
+
+#### Modifying Data Types
+```{r}
+# Modifying Data Types
+spotify$track_album_release_date<- as.Date(spotify$track_album_release_date)
+spotify$playlist_genre<-as.factor(spotify$playlist_genre)
+```
+
+#### Summary Statistics
+```{r}
+#summary statistics
+summary(spotify)
+```
+
+**Observations:**
+
+* There are probably some outliers and that some variables have too big Max (`duration_ms` has a Max of 517810; `tempo` has a Max of 239.44). 
+
+* We will do some truncation, winsorization or standardization to remove the outliers.
+
+
+#### Tables
+```{r}
+#lets look at some tables for categorical variables
+table(spotify$playlist_genre)
+table(spotify$playlist_subgenre)
+table(spotify$key)
+table(spotify$mode)
+
+```
+ 
+**Observations:**
+
+* Each category does not vary a lot in observations, which is good, because we it will be easier to interpret their predictions. 
+* no outliers
+
+#### Duplicates
+```{r}
+#Looking for duplicates
+dups_id <- sum(duplicated(spotify$track_id))
+print(dups_id)
+```
+
+
+We can see that a lot of songs have been duplicated in this dataset. They have the same `track_id`. Therefore we will remove them, for further analysis.
+
+```{r}
+spotify_dups = spotify[duplicated(spotify$track_id),]
+spotify = spotify[!duplicated(spotify$track_id),]
+```
+
+
+#### Missing Values
+```{r}
+#looking for missing values
+sum(is.na(spotify))
+```
+
+There are **1693 missing values** in this dataset. However, we will not remove them, since they might still be important for the analysis.
