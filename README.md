@@ -1,5 +1,5 @@
 # Spotify_Data_Anlysis
-This is the link to see the uploaded page:
+This is the link to see the Rpubs page:
 
 https://rpubs.com/evabeyebach/1125086
 
