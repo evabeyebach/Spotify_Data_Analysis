@@ -1,4 +1,4 @@
-# Spotify_Data_Anlysis
+# Spotify_Data_Analysis
 This is the link to see the Rpubs page:
 
 https://rpubs.com/evabeyebach/1125086
